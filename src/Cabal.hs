@@ -409,7 +409,7 @@ checkCabalFile = do
             ["Homepage no longer exists" | "~ndm" `isInfixOf` concat (grab "homepage")] ++
             ["Incorrect license" | grab "license" `notElem` [["BSD3"],["MIT"]]] ++
             ["Incorrect default language" | x <- grab "default-language", x /= "Haskell2010"] ++
-            ["Invalid tested-with: " ++ show test ++ "\nShould be prefix of " ++ show (reverse ghcReleases) | not $ validTests test] ++
+            ["Invalid tested-with: " ++ show test ++ "\nShould be a subrange of " ++ show (reverse ghcReleases) | not $ validTests test] ++
             ["Bad stabilty, should be missing" | grab "stability" /= []] ++
             ["Missing CHANGES.txt in extra-doc-files" | ["CHANGES.md", "CHANGES.txt","CHANGELOG.md","changelog.md"] `disjoint` concatMap words (grab "extra-doc-files")] ++
             ["Missing README.md in extra-doc-files" | "README.md" `notElem` concatMap words (grab "extra-doc-files")] ++
@@ -417,7 +417,7 @@ checkCabalFile = do
     unless (null bad) $ error $ unlines bad
 
 validTests :: [String] -> Bool
-validTests xs = length xs >= 1 && xs `isPrefixOf` reverse ghcReleases
+validTests xs = length xs >= 1 && xs `isInfixOf` reverse ghcReleases
 
 projectName x = owner ("https://github.com/" ++ ownerGithub x ++ "/") x
 ownerGithub = owner " https://github.com/" -- leading space ensures other <https:// links don't pollute the owner
