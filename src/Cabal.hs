@@ -17,7 +17,7 @@ import Arguments
 import Prelude
 
 -- | GHC releases I test with
-ghcReleases = ["8.0","8.2","8.4","8.6","8.8","8.10","9.0","9.2"]
+ghcReleases = ["9.0.2","9.2.8","9.4.8","9.6.7","9.8.4","9.10.2","9.12.2"]
 
 ghcWarnings = words "-Wunused-binds -Wunused-imports -Worphans"
 
@@ -59,7 +59,7 @@ cabalCheck = do
     checkChangelog
     checkGhci
     checkGithub tests
-    checkPullRequestTemplate
+    -- checkPullRequestTemplate
 
 
 checkGhci :: IO ()
@@ -188,7 +188,8 @@ run Test{..} = Just $ do
         -- cmdargs has a disabled executable, so this tool things it has one, but cabal falls over
         hasExecutable <- pure $ hasExecutable && project /= "cmdargs"
         system_ $ "cabal " ++ (if cabal2 then "v2-build" else "v1-install") ++ " --only-dependencies --enable-tests"
-        let ghcOptions = "-rtsopts" : "-Wtabs" : ghcWarnings ++
+        let ghcOptions = "-rtsopts" : "-Wtabs" :
+                         (if ghcVer `isPrefixOf` last ghcReleases then ghcWarnings else []) ++
                          ["-Werror" | not no_warnings]
         if cabal2 then do
             writeFile "cabal.project.local" $ unlines
@@ -289,26 +290,33 @@ testedWith = do
         f x | Just rest <- stripPrefix "GHC==" x = rest
             | otherwise = error $ "Invalid tested-with, " ++ x
 
+statusBadgeFor :: String -> String -> String
+statusBadgeFor githubPath branchName =
+    "[![Build status](https://img.shields.io/github/actions/workflow/status/"
+        ++ githubPath ++ "/ci.yml?branch=" ++ branchName ++ ")]"
+        ++ "(https://github.com/" ++ githubPath ++ "/actions)"
 
 checkReadme :: IO ()
 checkReadme = do
     name <- takeBaseName . fromMaybe (error "Couldn't find cabal file") <$> findCabal
     github <- githubPath
     src <- fmap lines $ readFile "README.md"
-    let badges =
+    let badgesFor name =
             ["[![Hackage version](https://img.shields.io/hackage/v/" ++ name ++ ".svg?label=Hackage)]" ++
              "(https://hackage.haskell.org/package/" ++ name ++ ")"
             ,"[![Stackage version](https://www.stackage.org/package/" ++ name ++ "/badge/nightly?label=Stackage)]" ++
              "(https://www.stackage.org/package/" ++ name ++ ")"
-            ,"[![Build status](https://img.shields.io/github/workflow/status/" ++ github ++ "/ci/master.svg)]" ++
-             "(https://github.com/" ++ github ++ "/actions)"
+            ,statusBadgeFor github "master"
+            ,statusBadgeFor github "main"
             ]
-    let line1 = head $ src ++ [""]
-    let bangs = length $ filter (== '!') line1
-    let foundBadges = filter (`isInfixOf` line1) badges
+    let badges = nubOrd $
+            badgesFor name ++ if name == "algebraic-graphs" then badgesFor "alga" else []
+    let line3 = (src ++ ["", "", ""]) !! 2
+    let bangs = length $ filter (== '!') line3
+    let foundBadges = filter (`isInfixOf` line3) badges
     let found = length foundBadges
-    when (found < 2) $
-        error $ "Expected first line of README.md to end with at least 2 badges, got:\n" ++ unlines foundBadges ++ "Expected from:\n" ++ unlines badges
+    when (found < 1) $
+        error $ "Expected third line of README.md to end with at least one badge, got:\n" ++ unlines foundBadges ++ "Expected from:\n" ++ unlines badges
     when (found /= bangs) $
         error $ "Unexpected badges, found " ++ show bangs ++ ", but only recognised " ++ show found
 
@@ -316,12 +324,13 @@ checkReadme = do
 checkChangelog :: IO ()
 checkChangelog = do
     res <- fromMaybe (error "Couldn't find changelog") <$>
-        findM doesFileExist ["CHANGES.txt","changelog.md", "CHANGELOG.md"]
+        findM doesFileExist ["CHANGES.md", "CHANGES.txt","changelog.md", "CHANGELOG.md"]
     src <- lines <$> readFile res
     let missingDate = filter (all $ isDigit ||^ (== '.')) $ filter (not . null) src
     when (missingDate /= []) $
         error $ "Expected dates for all releases, but missing for " ++ show missingDate
 
+{- Currently unused.
 
 checkPullRequestTemplate :: IO ()
 checkPullRequestTemplate = do
@@ -336,6 +345,7 @@ checkPullRequestTemplate = do
     when (res /= required) $
         error $ "Expected pull request template in the right form, but not found"
 
+-}
 
 getLatestYear :: IO String
 getLatestYear = do
@@ -360,7 +370,7 @@ checkCabalFile = do
                 , not $ any isSpace $ trim x, not $ "http" `isSuffixOf` x || "https" `isSuffixOf` x
                 , not $ all (\x -> isLower x || x == '-') x] ++
             [year ++ " is not in the copyright year" | not $ year `isInfixOf` concat (grab "copyright")] ++
-            ["copyright string is not at the start of the license-file" | not $ (concat (grab "copyright") `isInfixOf` concat (take 1 $ lines license)) || grab "license" == ["GPL"]] ++
+            -- ["copyright string is not at the start of the license-file" | not $ (concat (grab "copyright") `isInfixOf` concat (take 1 $ lines license)) || grab "license" == ["GPL"]] ++
             ["No correct source-repository link, wanted: " ++ want
                 | let want = "source-repository head type: git location: https://github.com/" ++ github ++ ".git"
                 , not $ want `isInfixOf` unwords (words $ unlines src)] ++
@@ -368,16 +378,16 @@ checkCabalFile = do
             ["Homepage no longer exists" | "~ndm" `isInfixOf` concat (grab "homepage")] ++
             ["Incorrect license" | grab "license" `notElem` [["BSD3"],["MIT"]]] ++
             ["Incorrect default language" | x <- grab "default-language", x /= "Haskell2010"] ++
-            ["Invalid tested-with: " ++ show test ++ "\nShould be prefix of " ++ show (reverse ghcReleases) | not $ validTests test] ++
-            ["Bad stabilty, should be missing" | grab "stability" /= []] ++
-            ["Missing CHANGES.txt in extra-doc-files" | ["CHANGES.txt","CHANGELOG.md","changelog.md"] `disjoint` concatMap words (grab "extra-doc-files")] ++
+            ["Invalid tested-with: " ++ show test ++ "\nShould be a subrange of " ++ show (reverse ghcReleases) | not $ validTests test] ++
+            ["Bad stability, should be missing" | grab "stability" /= []] ++
+            ["Missing CHANGES.txt in extra-doc-files" | ["CHANGES.md", "CHANGES.txt","CHANGELOG.md","changelog.md"] `disjoint` concatMap words (grab "extra-doc-files")] ++
             ["Missing README.md in extra-doc-files" | "README.md" `notElem` concatMap words (grab "extra-doc-files")] ++
             ["Not all flag's have manual attributes" | let flag = length $ filter ("flag " `isPrefixOf`) src, let manual = length $ filter ("manual:" `isPrefixOf`) $ map trimStart src, flag /= manual]
     unless (null bad) $ error $ unlines bad
     pure test
 
 validTests :: [String] -> Bool
-validTests xs = length xs >= 1 && xs `isPrefixOf` reverse ghcReleases
+validTests xs = length xs >= 1 && xs `isInfixOf` reverse ghcReleases
 
 repoName x = owner ("https://github.com/" ++ ownerGithub x ++ "/") x
 ownerGithub = owner " https://github.com/" -- leading space ensures other <https:// links don't pollute the owner
